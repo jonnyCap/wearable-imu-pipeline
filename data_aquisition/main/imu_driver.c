@@ -53,8 +53,10 @@ esp_err_t imu_init(void) {
         return ret;
     }
     
-    if (whoami != 0x68 && whoami != 0x68) {
-        ESP_LOGW(TAG, "Unexpected WHO_AM_I value: 0x%02X (expected 0x68)", whoami);
+    if (whoami != 0x68 && whoami != 0x19) {
+        ESP_LOGW(TAG, "Unexpected WHO_AM_I value: 0x%02X (expected 0x68 or 0x19)", whoami);
+    } else if (whoami == 0x19) {
+        ESP_LOGW(TAG, "Detected WHO_AM_I=0x19; continuing with MPU6050-compatible register map");
     }
     
     // Wake up MPU6050 (clear sleep bit in PWR_MGMT_1 register)
