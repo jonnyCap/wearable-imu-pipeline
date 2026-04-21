@@ -6,6 +6,7 @@ First, you will implement a simple windowing approach to cut incoming sensor dat
 Then, using recorded data samples from different activities (e.g., walking, standing still, stepping quickly), you will determine the filter parameters to detect walking accurately. Once these parameters are determined, you will apply them in real-time to filter incoming IMU sensor data on the wearable device and recognize walking activity effectively.
 
 ## Task Description
+**(GO FOR THE FULL POINTS VERSION ONLY)**
 
 ### Glance on Screen Detection (3 points)
 For the wearable device, implement a windowing approach (Tutorial 7, no overlap necessary here) that buffers 250 ms of accelerometer data, sampled, e.g., at 20 Hz, and then analyzes the signals from the x, y, and z axes to detect the gesture/posture of reading the device's screen. Keep the approach simple (KISS design principle), so aggregate the buffered data, e.g., using the mean, and use simple thresholds (ideally with error margin and hysteresis). Show a simple text or illustration on the screen when the gesture/posture is detected (and clear it afterward) to demonstrate the working feature in the video submission.
