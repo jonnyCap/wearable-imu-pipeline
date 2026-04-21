@@ -15,5 +15,8 @@
     "--query-driver=**",
     "--compile-commands-dir=/home/jonathan-maier/Documents/Master/Semester 2/Beyond the Desktop/Assignments/Assignment-2/wearable-imu-pipeline/data_aquisition/build"
   ],
-  "idf.flashType": "UART"
+  "idf.flashType": "UART",
+  "chat.tools.terminal.autoApprove": {
+    "hostname": true
+  }
 }

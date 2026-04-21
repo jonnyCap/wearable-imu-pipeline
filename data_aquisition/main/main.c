@@ -13,17 +13,23 @@
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_random.h"
 #include "nvs_flash.h"
 #include "lwip/sockets.h"
 #include "driver/gpio.h"
 #include "imu_driver.h"
+#include "secrets.h"  // Include WiFi credentials and other secrets
 
 // Configuration Parameters - update these according to your local network and server setup
+#ifndef WIFI_SSID 
 #define WIFI_SSID      "YOUR_WIFI_SSID"
+#endif
+#ifndef WIFI_PASS
 #define WIFI_PASS      "YOUR_WIFI_PASSWORD"
-#define SERVER_IP      "192.168.1.100"  // Your computer's IP address
+#endif
+
+#define SERVER_IP      "192.168.0.51"
 #define SERVER_PORT    8080
-#define SESSION_UUID   "session-0001"
 
 // Button configuration for M5Stack
 #define BUTTON_GPIO    GPIO_NUM_39  // Button A on M5Stack
@@ -36,10 +42,28 @@
 
 static const char *TAG = "imu_client";
 static TimerHandle_t wifi_reconnect_timer;
+static char current_session_uuid[37] = {0};
 
 // Recording state: 0 = idle, 1 = recording, 2 = stop requested
 static volatile int recording_state = 0;
 static uint32_t last_button_press = 0;
+
+static void generate_session_uuid(char *uuid_buf, size_t buf_len) {
+    uint8_t raw[16];
+    esp_fill_random(raw, sizeof(raw));
+
+    // Set UUID version (4) and variant (RFC 4122).
+    raw[6] = (raw[6] & 0x0F) | 0x40;
+    raw[8] = (raw[8] & 0x3F) | 0x80;
+
+    snprintf(uuid_buf, buf_len,
+             "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+             raw[0], raw[1], raw[2], raw[3],
+             raw[4], raw[5],
+             raw[6], raw[7],
+             raw[8], raw[9],
+             raw[10], raw[11], raw[12], raw[13], raw[14], raw[15]);
+}
 
 // Read accelerometer data from MPU6050 IMU
 void get_accelerometer_data(float *x, float *y, float *z) {
@@ -152,6 +176,9 @@ void imu_streaming_task(void *pvParameters) {
         while (recording_state == 0) {
             vTaskDelay(100 / portTICK_PERIOD_MS);
         }
+
+        generate_session_uuid(current_session_uuid, sizeof(current_session_uuid));
+        ESP_LOGI(TAG, "New recording session UUID: %s", current_session_uuid);
         
         ESP_LOGI(TAG, "Recording state changed, attempting connection...");
 
@@ -190,7 +217,7 @@ void imu_streaming_task(void *pvParameters) {
             char current_reading[150];
             snprintf(current_reading, sizeof(current_reading), 
                      "{\"uuid\": \"%s\", \"x\": %.4f, \"y\": %.4f, \"z\": %.4f}\n", 
-                     SESSION_UUID, x, y, z);
+                     current_session_uuid, x, y, z);
             
             // Append it to our batch buffer
             strcat(payload_batch, current_reading);
@@ -223,7 +250,7 @@ void imu_streaming_task(void *pvParameters) {
         // Recording stopped, send the "final" flag
         ESP_LOGI(TAG, "Transmitting completion status");
         char final_payload[100];
-        snprintf(final_payload, sizeof(final_payload), "{\"uuid\": \"%s\", \"final\": true}\n", SESSION_UUID);
+        snprintf(final_payload, sizeof(final_payload), "{\"uuid\": \"%s\", \"final\": true}\n", current_session_uuid);
         send(sock, final_payload, strlen(final_payload), 0);
 
         if (sock != -1) {
