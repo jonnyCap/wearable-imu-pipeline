@@ -1,3 +1,6 @@
 {
-    "idf.currentSetup": "/home/jonathan-maier/.espressif/v5.5.3/esp-idf"
+    "idf.currentSetup": "/home/jonathan-maier/.espressif/v5.5.3/esp-idf",
+    "chat.tools.terminal.autoApprove": {
+        "\"/home/jonathan-maier/Documents/Master/Semester": true
+    }
 }

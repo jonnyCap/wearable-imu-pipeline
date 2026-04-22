@@ -21,16 +21,10 @@ First, implement software that allows you to stream the accelerometer measuremen
 Use the provided Jupyter Notebook to analyze the data (based on Tutorial 6). You can use the FFT (fast Fourier transform) or Welch's method (average of multiple FFTs on data segments) to obtain the frequency spectrum or periodogram, respectively. Based on your insights, decide on a suitable aggregation technique as well as filters and filter parameters (e.g., cutoff frequency) to preprocess the raw signals. With the target application of step counting in mind, use the provided Python functions to test your concept and configuration.
 
 **Wearable Implementation & Step Detection**
-Finally, you will transfer your system concept to the wearable device. Use the provided Python script to calculate the filter coefficients for implementing the filters (Tutorial 6), enabling real-time signal processing on the wearable. Keep in mind that you can peek into the black box and test your filter implementation by streaming the signals to your computer at any time. Eventually, implement the rest of the concept by implementing aggregation, windowing (Tutorial 7, Task 1), and step feature detection. Base your implementation on realistic and feasible assumptions on the step activity (e.g., step frequency and interval) to determine, e.g., window size, overlap, and threshold levels.
-
-* **Version A (1.0 / 3.0 points):** Detect whether the user is walking or not walking.
-* **Version B (3.0 / 3.0 points):** Count the number of steps the user is performing.
+Finally, you will transfer your system concept to the wearable device. Use the provided Python script to calculate the filter coefficients for implementing the filters (Tutorial 6), enabling real-time signal processing on the wearable. Keep in mind that you can peek into the black box and test your filter implementation by streaming the signals to your computer at any time. Eventually, implement the rest of the concept by implementing aggregation, windowing (Tutorial 7, Task 1), and step feature detection. Base your implementation on realistic and feasible assumptions on the step activity (e.g., step frequency and interval) to determine, e.g., window size, overlap, and threshold levels. Count the number of steps the user is performing.
 
 ### Display Results
-Display the results:
-* **Version A (0.25 / 1.0 points):** Stream the step count to a computer terminal.
-* **Version B (0.5 / 1.0 points):** Display the live count directly on the wearable screen.
-* **Version C (1.0 / 1.0 points):** Show the count only when the reading gesture (Task 1) is detected.
+Show the count only when the reading gesture (Task 1) is detected.
 
 ### Reflection (1 point)
 a) First, write a brief reflection about your experience with the tasks. Cover your gained knowledge, insights, and identified topics where you need further clarification or faced challenges.
