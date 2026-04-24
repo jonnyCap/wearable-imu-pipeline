@@ -144,11 +144,20 @@ esp_err_t imu_init(void)
         ESP_LOGW(TAG, "Unexpected WHO_AM_I value: 0x%02X", whoami);
     }
 
-    uint8_t pwr_mgmt_data[2] = {MPU6050_REG_PWR_MGMT_1, 0x00};
-    ret = i2c_master_transmit(dev_handle, pwr_mgmt_data, 2, -1);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to wake up MPU6050: %s", esp_err_to_name(ret));
-        return ret;
+    uint8_t init_cmds[][2] = {
+        {MPU6050_REG_PWR_MGMT_1, 0x00},
+        {MPU6886_REG_ACCEL_CONFIG, 0x00},
+        {MPU6886_REG_ACCEL_CONFIG_2, 0x01},
+        {MPU6886_REG_SMPLRT_DIV, 0x05},
+    };
+
+    for (size_t i = 0; i < sizeof(init_cmds) / sizeof(init_cmds[0]); ++i) {
+        ret = i2c_master_transmit(dev_handle, init_cmds[i], sizeof(init_cmds[i]), -1);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to initialize MPU sensor register 0x%02X: %s",
+                     init_cmds[i][0], esp_err_to_name(ret));
+            return ret;
+        }
     }
 
     vTaskDelay(pdMS_TO_TICKS(20));

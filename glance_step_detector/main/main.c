@@ -2,16 +2,13 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
-#include "driver/gpio.h"
-#include "driver/spi_master.h"
 #include "esp_err.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
-#include "esp_lcd_panel_vendor.h"
 #include "esp_log.h"
-#include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "imu_driver.h"
@@ -58,7 +55,6 @@
 #define LCD_PIN_NUM_CS                 GPIO_NUM_5
 #define LCD_PIN_NUM_DC                 GPIO_NUM_23
 #define LCD_PIN_NUM_RST                GPIO_NUM_18
-#define LCD_PIN_NUM_BCKL               GPIO_NUM_32
 #define LCD_PCLK_HZ                    (40 * 1000 * 1000)
 #define DISPLAY_FONT_MAX_SCALE         6
 
@@ -77,6 +73,7 @@ typedef struct {
     float x;
     float y;
     float z;
+    float mag;
 } accel_sample_t;
 
 typedef struct {
@@ -195,14 +192,22 @@ static void display_draw_bitmap_sync(display_state_t *display,
 
 static void display_fill_screen(display_state_t *display, uint16_t color)
 {
-    uint16_t row[LCD_H_RES];
-    for (size_t index = 0; index < LCD_H_RES; ++index) {
-        row[index] = color;
+    const int chunk_height = 10;
+    uint16_t *buffer = malloc(LCD_H_RES * chunk_height * sizeof(uint16_t));
+    if (!buffer) {
+        return;
     }
 
-    for (int y = 0; y < LCD_V_RES; ++y) {
-        display_draw_bitmap_sync(display, 0, y, LCD_H_RES, y + 1, row);
+    for (int index = 0; index < LCD_H_RES * chunk_height; ++index) {
+        buffer[index] = color;
     }
+
+    for (int y = 0; y < LCD_V_RES; y += chunk_height) {
+        const int current_h = (y + chunk_height <= LCD_V_RES) ? chunk_height : (LCD_V_RES - y);
+        display_draw_bitmap_sync(display, 0, y, LCD_H_RES, y + current_h, buffer);
+    }
+
+    free(buffer);
 }
 
 static void draw_filled_rect(display_state_t *display, int x, int y, int width, int height, uint16_t color)
@@ -292,7 +297,10 @@ static void display_draw_char(display_state_t *display,
     const uint8_t *glyph = glyph_for_char(character);
     const int width = 6 * scale;
     const int height = 8 * scale;
-    static uint16_t buffer[6 * 8 * DISPLAY_FONT_MAX_SCALE * DISPLAY_FONT_MAX_SCALE];
+    uint16_t *buffer = malloc(width * height * sizeof(uint16_t));
+    if (!buffer) {
+        return;
+    }
 
     for (int row = 0; row < height; ++row) {
         const int source_row = row / scale;
@@ -307,6 +315,7 @@ static void display_draw_char(display_state_t *display,
     }
 
     display_draw_bitmap_sync(display, x, y, x + width, y + height, buffer);
+    free(buffer);
 }
 
 static void display_draw_text(display_state_t *display,
@@ -393,13 +402,6 @@ static esp_err_t display_init(display_state_t *display)
     ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(display->panel, true));
     ESP_ERROR_CHECK(esp_lcd_panel_mirror(display->panel, true, false));
     ESP_ERROR_CHECK(esp_lcd_panel_set_gap(display->panel, 40, 52));
-
-    gpio_config_t backlight_config = {
-        .pin_bit_mask = 1ULL << LCD_PIN_NUM_BCKL,
-        .mode = GPIO_MODE_OUTPUT,
-    };
-    ESP_ERROR_CHECK(gpio_config(&backlight_config));
-    ESP_ERROR_CHECK(gpio_set_level(LCD_PIN_NUM_BCKL, 1));
 
     display->ready = true;
     display_fill_screen(display, rgb565(0, 0, 0));
@@ -562,13 +564,21 @@ void app_main(void)
             continue;
         }
 
+        const float sample_magnitude = accel_norm((accel_sample_t){
+            .x = x,
+            .y = y,
+            .z = z,
+        });
+
         window[window_count] = (accel_sample_t){
             .x = x,
             .y = y,
             .z = z,
+            .mag = sample_magnitude,
         };
-        const float sample_magnitude = accel_norm(window[window_count]);
-        step_signal_window[window_count] = bandpass_process(&step_highpass, &step_lowpass, sample_magnitude);
+        step_signal_window[window_count] = bandpass_process(&step_highpass,
+                                                             &step_lowpass,
+                                                             sample_magnitude);
         window_count += 1;
 
         if (window_count < WINDOW_SAMPLES) {
@@ -584,7 +594,7 @@ void app_main(void)
         float max_filtered = -INFINITY;
         for (size_t i = 0; i < WINDOW_SAMPLES; ++i) {
             const accel_sample_t sample = window[i];
-            const float magnitude = accel_norm(sample);
+            const float magnitude = sample.mag;
             const float filtered_step_signal = step_signal_window[i];
 
             sum_x += sample.x;
