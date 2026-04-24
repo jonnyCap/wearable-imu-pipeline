@@ -2,6 +2,8 @@
 
 #include "driver/i2c_master.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static const char *TAG = "imu_driver";
 
@@ -9,9 +11,75 @@ static const char *TAG = "imu_driver";
 #define I2C_MASTER_SDA_IO          21
 #define I2C_MASTER_NUM             I2C_NUM_0
 #define I2C_MASTER_FREQ_HZ         400000
+#define AXP192_ADDR                0x34
 
 static i2c_master_bus_handle_t bus_handle = NULL;
 static i2c_master_dev_handle_t dev_handle = NULL;
+static i2c_master_dev_handle_t axp_dev_handle = NULL;
+
+static esp_err_t axp_write_register(uint8_t reg, uint8_t value)
+{
+    uint8_t payload[2] = {reg, value};
+    return i2c_master_transmit(axp_dev_handle, payload, sizeof(payload), -1);
+}
+
+static esp_err_t axp_read_register(uint8_t reg, uint8_t *value)
+{
+    return i2c_master_transmit_receive(axp_dev_handle, &reg, 1, value, 1, -1);
+}
+
+static esp_err_t axp192_enable_power_rails(void)
+{
+    esp_err_t ret = ESP_OK;
+    uint8_t value = 0;
+
+    ret = axp_write_register(0x28, 0xCC);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    ret = axp_write_register(0x82, 0xFF);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    ret = axp_write_register(0x33, 0xC0);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    ret = axp_read_register(0x12, &value);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    ret = axp_write_register(0x12, value | 0x4D);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    ret = axp_write_register(0x36, 0x0C);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    ret = axp_write_register(0x91, 0xF0);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    ret = axp_write_register(0x90, 0x02);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    ret = axp_write_register(0x30, 0x80);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    ret = axp_write_register(0x39, 0xFC);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    ret = axp_write_register(0x35, 0xA2);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    ret = axp_write_register(0x32, 0x46);
+    return ret;
+}
 
 esp_err_t imu_init(void)
 {
@@ -30,6 +98,26 @@ esp_err_t imu_init(void)
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create I2C master bus: %s", esp_err_to_name(ret));
         return ret;
+    }
+
+    i2c_device_config_t axp_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = AXP192_ADDR,
+        .scl_speed_hz = I2C_MASTER_FREQ_HZ,
+    };
+
+    ret = i2c_master_bus_add_device(bus_handle, &axp_cfg, &axp_dev_handle);
+    if (ret == ESP_OK) {
+        ret = axp192_enable_power_rails();
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "AXP192 power setup failed: %s", esp_err_to_name(ret));
+        } else {
+            ESP_LOGI(TAG, "AXP192 power rails enabled");
+        }
+    } else {
+        ESP_LOGW(TAG, "AXP192 not available on I2C bus: %s", esp_err_to_name(ret));
+        axp_dev_handle = NULL;
+        ret = ESP_OK;
     }
 
     i2c_device_config_t dev_cfg = {
@@ -62,6 +150,8 @@ esp_err_t imu_init(void)
         ESP_LOGE(TAG, "Failed to wake up MPU6050: %s", esp_err_to_name(ret));
         return ret;
     }
+
+    vTaskDelay(pdMS_TO_TICKS(20));
 
     ESP_LOGI(TAG, "MPU6050 initialized successfully");
     return ESP_OK;
@@ -103,6 +193,15 @@ esp_err_t imu_deinit(void)
             ESP_LOGE(TAG, "Failed to remove device: %s", esp_err_to_name(ret));
         }
         dev_handle = NULL;
+    }
+
+    if (axp_dev_handle) {
+        esp_err_t axp_ret = i2c_master_bus_rm_device(axp_dev_handle);
+        if (axp_ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to remove AXP192 device: %s", esp_err_to_name(axp_ret));
+            ret = axp_ret;
+        }
+        axp_dev_handle = NULL;
     }
 
     if (bus_handle) {
