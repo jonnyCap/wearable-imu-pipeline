@@ -17,17 +17,50 @@ static i2c_master_bus_handle_t bus_handle = NULL;
 static i2c_master_dev_handle_t dev_handle = NULL;
 static i2c_master_dev_handle_t axp_dev_handle = NULL;
 
+/**
+ * @brief Write a single byte to an AXP192 register.
+ *
+ * Sends a 2-byte payload `{register, value}` to the configured AXP192 device
+ * handle using a blocking transmit operation.
+ *
+ * @param reg Register address to write.
+ * @param value Byte value to write to the register.
+ *
+ * @return ESP-IDF I2C status code from `i2c_master_transmit`.
+ */
 static esp_err_t axp_write_register(uint8_t reg, uint8_t value)
 {
     uint8_t payload[2] = {reg, value};
     return i2c_master_transmit(axp_dev_handle, payload, sizeof(payload), -1);
 }
 
+/**
+ * @brief Read one byte from an AXP192 register.
+ *
+ * Performs a combined write-read I2C transaction where the register address is
+ * written first, followed by reading one data byte.
+ *
+ * @param reg Register address to read.
+ * @param[out] value Pointer to receive the register byte.
+ *
+ * @return ESP-IDF I2C status code from `i2c_master_transmit_receive`.
+ */
 static esp_err_t axp_read_register(uint8_t reg, uint8_t *value)
 {
     return i2c_master_transmit_receive(axp_dev_handle, &reg, 1, value, 1, -1);
 }
 
+/**
+ * @brief Configure AXP192 rails needed by the board peripherals.
+ *
+ * Applies a predefined sequence of AXP192 register writes (plus one read-
+ * modify-write) to enable and tune power rails expected by the M5Stack/ESP32
+ * board variant that hosts the IMU and display.
+ *
+ * @return
+ * - ESP_OK when all PMIC transactions complete successfully.
+ * - First ESP_ERR_* code returned by any failed AXP192 I2C operation.
+ */
 static esp_err_t axp192_enable_power_rails(void)
 {
     esp_err_t ret = ESP_OK;
@@ -81,6 +114,17 @@ static esp_err_t axp192_enable_power_rails(void)
     return ret;
 }
 
+/**
+ * @brief Initialize I2C bus, optional PMIC, and accelerometer sensor.
+ *
+ * Creates the I2C master bus, probes/initializes AXP192 power rails when
+ * available, attaches the MPU sensor, checks WHO_AM_I, and applies startup
+ * accelerometer settings used by the application sampling pipeline.
+ *
+ * @return
+ * - ESP_OK when initialization and sensor configuration succeed.
+ * - ESP_ERR_* for any fatal bus/device/register configuration failure.
+ */
 esp_err_t imu_init(void)
 {
     esp_err_t ret = ESP_OK;
@@ -166,6 +210,22 @@ esp_err_t imu_init(void)
     return ESP_OK;
 }
 
+/**
+ * @brief Read and convert one accelerometer measurement.
+ *
+ * Fetches raw X/Y/Z high+low bytes from the sensor, combines them into signed
+ * 16-bit values, and converts each axis to g units using the configured sensor
+ * sensitivity constant.
+ *
+ * @param[out] x Pointer receiving acceleration on X axis in g.
+ * @param[out] y Pointer receiving acceleration on Y axis in g.
+ * @param[out] z Pointer receiving acceleration on Z axis in g.
+ *
+ * @return
+ * - ESP_OK on success.
+ * - ESP_ERR_INVALID_ARG if driver/output pointers are invalid.
+ * - ESP_ERR_* from I2C transaction if sensor read fails.
+ */
 esp_err_t imu_read_accel(float *x, float *y, float *z)
 {
     if (!dev_handle || !x || !y || !z) {
@@ -192,6 +252,17 @@ esp_err_t imu_read_accel(float *x, float *y, float *z)
     return ESP_OK;
 }
 
+/**
+ * @brief Release I2C devices and bus resources owned by the driver.
+ *
+ * Removes the MPU and optional AXP192 device handles from the I2C bus, then
+ * deletes the bus itself. Handles are nulled after each attempt to prevent
+ * stale references.
+ *
+ * @return
+ * - ESP_OK when all cleanup operations succeed.
+ * - Last observed ESP_ERR_* from device removal or bus deletion failures.
+ */
 esp_err_t imu_deinit(void)
 {
     esp_err_t ret = ESP_OK;

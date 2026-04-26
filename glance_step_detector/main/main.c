@@ -88,6 +88,15 @@ typedef struct {
 
 static const char *TAG = "glance_step_detector";
 
+/**
+ * @brief Clamp a floating-point value to a closed interval.
+ *
+ * @param value Input value to constrain.
+ * @param minimum Lower bound (inclusive).
+ * @param maximum Upper bound (inclusive).
+ *
+ * @return `value` limited to the `[minimum, maximum]` range.
+ */
 static inline float float_clamp(float value, float minimum, float maximum)
 {
     if (value < minimum) {
@@ -99,11 +108,32 @@ static inline float float_clamp(float value, float minimum, float maximum)
     return value;
 }
 
+/**
+ * @brief Compute Euclidean acceleration magnitude from axis sample.
+ *
+ * Uses $\sqrt{x^2 + y^2 + z^2}$ to convert a 3-axis accelerometer sample to
+ * a scalar norm in g units.
+ *
+ * @param sample Accelerometer sample with x/y/z components.
+ *
+ * @return Magnitude of the acceleration vector in g.
+ */
 static inline float accel_norm(accel_sample_t sample)
 {
     return sqrtf(sample.x * sample.x + sample.y * sample.y + sample.z * sample.z);
 }
 
+/**
+ * @brief Initialize a second-order low-pass biquad filter.
+ *
+ * Calculates normalized direct-form coefficients for a Butterworth-like
+ * low-pass response (Q ~= 0.7071) at the given cutoff and sample rate, and
+ * resets internal delay states.
+ *
+ * @param[out] filter Filter state/coefficients to initialize.
+ * @param sample_rate_hz Sampling rate in Hz.
+ * @param cutoff_hz Low-pass cutoff frequency in Hz.
+ */
 static void biquad_init_lowpass(biquad_t *filter, float sample_rate_hz, float cutoff_hz)
 {
     const float q = 0.70710678f;
@@ -122,6 +152,17 @@ static void biquad_init_lowpass(biquad_t *filter, float sample_rate_hz, float cu
     filter->z2 = 0.0f;
 }
 
+/**
+ * @brief Initialize a second-order high-pass biquad filter.
+ *
+ * Calculates normalized direct-form coefficients for a Butterworth-like
+ * high-pass response (Q ~= 0.7071) at the given cutoff and sample rate, and
+ * resets internal delay states.
+ *
+ * @param[out] filter Filter state/coefficients to initialize.
+ * @param sample_rate_hz Sampling rate in Hz.
+ * @param cutoff_hz High-pass cutoff frequency in Hz.
+ */
 static void biquad_init_highpass(biquad_t *filter, float sample_rate_hz, float cutoff_hz)
 {
     const float q = 0.70710678f;
@@ -140,6 +181,17 @@ static void biquad_init_highpass(biquad_t *filter, float sample_rate_hz, float c
     filter->z2 = 0.0f;
 }
 
+/**
+ * @brief Process one sample through a biquad filter section.
+ *
+ * Implements direct-form II transposed filtering and updates internal delay
+ * states for the next sample.
+ *
+ * @param[in,out] filter Filter coefficients and state memory.
+ * @param input Input sample.
+ *
+ * @return Filtered output sample.
+ */
 static float biquad_process(biquad_t *filter, float input)
 {
     const float output = filter->b0 * input + filter->z1;
@@ -148,17 +200,53 @@ static float biquad_process(biquad_t *filter, float input)
     return output;
 }
 
+/**
+ * @brief Apply cascaded high-pass then low-pass filtering.
+ *
+ * This constructs a band-pass response suitable for step activity estimation
+ * by removing gravity drift first and then suppressing higher-frequency noise.
+ *
+ * @param[in,out] highpass High-pass filter state.
+ * @param[in,out] lowpass Low-pass filter state.
+ * @param input Input scalar sample.
+ *
+ * @return Band-passed sample value.
+ */
 static float bandpass_process(biquad_t *highpass, biquad_t *lowpass, float input)
 {
     return biquad_process(lowpass, biquad_process(highpass, input));
 }
 
+/**
+ * @brief Convert 8-bit RGB color channels to display-endian RGB565.
+ *
+ * Packs 24-bit RGB into 16-bit 5:6:5 format and swaps byte order to match the
+ * panel transfer format used by this driver path.
+ *
+ * @param red Red channel (0-255).
+ * @param green Green channel (0-255).
+ * @param blue Blue channel (0-255).
+ *
+ * @return Packed RGB565 color value with byte order adjusted for LCD writes.
+ */
 static uint16_t rgb565(uint8_t red, uint8_t green, uint8_t blue)
 {
     const uint16_t color = (uint16_t)(((red & 0xF8) << 8) | ((green & 0xFC) << 3) | (blue >> 3));
     return (uint16_t)((color >> 8) | (color << 8));
 }
 
+/**
+ * @brief LCD transfer-complete callback used by asynchronous panel IO.
+ *
+ * Signals the flush semaphore from ISR context when a queued color transfer
+ * finishes so synchronous draw helpers can block until completion.
+ *
+ * @param panel_io Panel IO handle (unused).
+ * @param event_data Transfer event data (unused).
+ * @param user_ctx User context containing the flush semaphore handle.
+ *
+ * @return `true` when a higher-priority task was woken; otherwise `false`.
+ */
 static bool display_on_color_trans_done(esp_lcd_panel_io_handle_t panel_io,
                                         esp_lcd_panel_io_event_data_t *event_data,
                                         void *user_ctx)
@@ -172,6 +260,19 @@ static bool display_on_color_trans_done(esp_lcd_panel_io_handle_t panel_io,
     return task_woken == pdTRUE;
 }
 
+/**
+ * @brief Draw a bitmap region and block until transfer completion.
+ *
+ * Clears stale semaphore signals, submits a panel draw command, and waits for
+ * the completion callback to release the semaphore before returning.
+ *
+ * @param[in,out] display Display runtime state.
+ * @param x_start Left pixel (inclusive).
+ * @param y_start Top pixel (inclusive).
+ * @param x_end Right pixel (exclusive).
+ * @param y_end Bottom pixel (exclusive).
+ * @param color_data Pointer to RGB565 pixel data.
+ */
 static void display_draw_bitmap_sync(display_state_t *display,
                                      int x_start,
                                      int y_start,
@@ -190,6 +291,15 @@ static void display_draw_bitmap_sync(display_state_t *display,
     xSemaphoreTake(display->flush_sem, DISPLAY_FLUSH_TIMEOUT_TICKS);
 }
 
+/**
+ * @brief Fill the full display with a solid color.
+ *
+ * Uses a small reusable line-chunk buffer to avoid allocating a full-frame
+ * buffer while still minimizing panel transactions.
+ *
+ * @param[in,out] display Display runtime state.
+ * @param color RGB565 color to apply to the whole screen.
+ */
 static void display_fill_screen(display_state_t *display, uint16_t color)
 {
     const int chunk_height = 10;
@@ -210,6 +320,19 @@ static void display_fill_screen(display_state_t *display, uint16_t color)
     free(buffer);
 }
 
+/**
+ * @brief Draw a filled rectangle in RGB565 color.
+ *
+ * Rasterizes one scanline buffer and reuses it for each output row to reduce
+ * temporary allocations.
+ *
+ * @param[in,out] display Display runtime state.
+ * @param x Rectangle left coordinate.
+ * @param y Rectangle top coordinate.
+ * @param width Rectangle width in pixels.
+ * @param height Rectangle height in pixels.
+ * @param color Fill color in RGB565 format.
+ */
 static void draw_filled_rect(display_state_t *display, int x, int y, int width, int height, uint16_t color)
 {
     if (width <= 0 || height <= 0) {
@@ -226,6 +349,16 @@ static void draw_filled_rect(display_state_t *display, int x, int y, int width, 
     }
 }
 
+/**
+ * @brief Return 5x7 bitmap glyph data for supported characters.
+ *
+ * Maps a restricted set of uppercase letters and digits to fixed-width glyph
+ * bitmaps used by the simple on-device text renderer.
+ *
+ * @param character ASCII character to map.
+ *
+ * @return Pointer to 5-byte column-major glyph bitmap; space glyph if unknown.
+ */
 static const uint8_t *glyph_for_char(char character)
 {
     static const uint8_t glyph_space[5] = {0, 0, 0, 0, 0};
@@ -279,6 +412,20 @@ static const uint8_t *glyph_for_char(char character)
     }
 }
 
+/**
+ * @brief Draw one scaled bitmap font character.
+ *
+ * Expands a 5x7 glyph into a caller-selected integer scale, blends foreground
+ * and background pixels, and flushes the resulting bitmap to the display.
+ *
+ * @param[in,out] display Display runtime state.
+ * @param x Left pixel position.
+ * @param y Top pixel position.
+ * @param character ASCII character to render.
+ * @param fg_color Foreground text color.
+ * @param bg_color Background color.
+ * @param scale Integer glyph scaling factor (clamped to supported range).
+ */
 static void display_draw_char(display_state_t *display,
                               int x,
                               int y,
@@ -318,6 +465,20 @@ static void display_draw_char(display_state_t *display,
     free(buffer);
 }
 
+/**
+ * @brief Draw a text string using the internal fixed bitmap font.
+ *
+ * Renders characters left-to-right at fixed cell spacing, supporting simple
+ * whitespace handling and caller-defined foreground/background colors.
+ *
+ * @param[in,out] display Display runtime state.
+ * @param x Left pixel start position.
+ * @param y Top pixel baseline position.
+ * @param text Null-terminated string to render.
+ * @param fg_color Foreground text color.
+ * @param bg_color Background color.
+ * @param scale Integer glyph scaling factor.
+ */
 static void display_draw_text(display_state_t *display,
                               int x,
                               int y,
@@ -338,6 +499,21 @@ static void display_draw_text(display_state_t *display,
     }
 }
 
+/**
+ * @brief Initialize LCD bus, panel IO, and panel state.
+ *
+ * Configures SPI transport, panel IO callbacks, ST7789 panel device state, and
+ * orientation parameters, then clears the screen. On unsupported targets,
+ * gracefully reports `ESP_ERR_NOT_SUPPORTED`.
+ *
+ * @param[out] display Display state structure to initialize.
+ *
+ * @return
+ * - ESP_OK when the display is ready.
+ * - ESP_ERR_NO_MEM if semaphore allocation fails.
+ * - ESP_ERR_NOT_SUPPORTED on non-ESP32 target path.
+ * - ESP_ERR_* code from bus/panel initialization failures.
+ */
 static esp_err_t display_init(display_state_t *display)
 {
     memset(display, 0, sizeof(*display));
@@ -415,6 +591,13 @@ static esp_err_t display_init(display_state_t *display)
 #endif
 }
 
+/**
+ * @brief Render the inactive/hidden screen state.
+ *
+ * Clears the panel to black when display output is available.
+ *
+ * @param[in,out] display Display runtime state.
+ */
 static void display_show_hidden(display_state_t *display)
 {
     if (!display->ready) {
@@ -424,6 +607,15 @@ static void display_show_hidden(display_state_t *display)
     display_fill_screen(display, rgb565(0, 0, 0));
 }
 
+/**
+ * @brief Render the numeric step count in the center content area.
+ *
+ * Formats the 32-bit step count, computes centered placement, paints a backing
+ * strip, and draws the enlarged number text.
+ *
+ * @param[in,out] display Display runtime state.
+ * @param step_count Current accumulated step count.
+ */
 static void display_draw_step_count(display_state_t *display, uint32_t step_count)
 {
     if (!display->ready) {
@@ -441,6 +633,15 @@ static void display_draw_step_count(display_state_t *display, uint32_t step_coun
     display_draw_text(display, text_x, 48, step_text, rgb565(255, 255, 255), rgb565(2, 8, 6), scale);
 }
 
+/**
+ * @brief Render the active glance UI screen with heading and step count.
+ *
+ * Draws the panel background, a heading banner, and the current counter value
+ * when the wrist pose indicates glance mode is active.
+ *
+ * @param[in,out] display Display runtime state.
+ * @param step_count Current accumulated step count.
+ */
 static void display_show_active(display_state_t *display, uint32_t step_count)
 {
     if (!display->ready) {
@@ -453,11 +654,34 @@ static void display_show_active(display_state_t *display, uint32_t step_count)
     display_draw_step_count(display, step_count);
 }
 
+/**
+ * @brief Render the inactive display state.
+ *
+ * Wrapper that currently maps inactive mode to a hidden/blanked screen for
+ * future flexibility if additional inactive visuals are introduced.
+ *
+ * @param[in,out] display Display runtime state.
+ */
 static void display_show_inactive(display_state_t *display)
 {
     display_show_hidden(display);
 }
 
+/**
+ * @brief Emit verbose per-window debug sample metrics when enabled.
+ *
+ * Logging is compiled in only when `GLANCE_DEBUG` is non-zero; otherwise
+ * parameters are explicitly marked unused.
+ *
+ * @param x Mean/sample X acceleration in g.
+ * @param y Mean/sample Y acceleration in g.
+ * @param z Mean/sample Z acceleration in g.
+ * @param magnitude Mean acceleration magnitude in g.
+ * @param motion_level Scalar motion metric derived from variance.
+ * @param activity_peak_to_peak Band-passed step signal peak-to-peak amplitude.
+ * @param glance_active Current glance-state flag.
+ * @param step_count Current step count.
+ */
 static void log_sample_debug(float x,
                              float y,
                              float z,
@@ -483,6 +707,20 @@ static void log_sample_debug(float x,
 #endif
 }
 
+/**
+ * @brief Periodically log glance-state classifier internals.
+ *
+ * Reports pose means, magnitude, stability indicator, and energy metrics to
+ * help tune threshold values and diagnose false positives/negatives.
+ *
+ * @param mean_x Mean X acceleration over current window.
+ * @param mean_y Mean Y acceleration over current window.
+ * @param mean_z Mean Z acceleration over current window.
+ * @param stability_energy Summed per-axis variance metric.
+ * @param mean_magnitude Mean acceleration magnitude over window.
+ * @param stable_window Whether current window passed stability gate.
+ * @param glance_active Current glance-state flag.
+ */
 static void log_glance_status(float mean_x,
                               float mean_y,
                               float mean_z,
@@ -515,6 +753,40 @@ static void log_glance_status(float mean_x,
     }
 }
 
+/**
+ * @brief Log buffered samples used to validate a detected step.
+ *
+ * Emits one line per window entry with raw axis values, magnitude, and the
+ * corresponding filtered step signal.
+ *
+ * @param window Buffered accelerometer samples for the current detection window.
+ * @param filtered_window Buffered band-passed step signal values.
+ */
+static void log_step_detection_buffer(const accel_sample_t window[WINDOW_SAMPLES],
+                                      const float filtered_window[WINDOW_SAMPLES])
+{
+    ESP_LOGI(TAG, "Step window dump (%d samples)", WINDOW_SAMPLES);
+    for (size_t i = 0; i < WINDOW_SAMPLES; ++i) {
+        ESP_LOGI(TAG,
+                 "  [%u] x=%.3f y=%.3f z=%.3f mag=%.3f filt=%.3f",
+                 (unsigned)i,
+                 window[i].x,
+                 window[i].y,
+                 window[i].z,
+                 window[i].mag,
+                 filtered_window[i]);
+    }
+}
+
+/**
+ * @brief Main application loop for glance-triggered step visualization.
+ *
+ * Initializes IMU and display resources, samples accelerometer data at the
+ * configured rate, computes windowed orientation/stability features for glance
+ * state transitions with hysteresis, detects steps from a band-passed
+ * magnitude signal with refractory handling, updates the on-device display, and
+ * emits periodic diagnostic logs.
+ */
 void app_main(void)
 {
     ESP_ERROR_CHECK(imu_init());
@@ -703,6 +975,7 @@ void app_main(void)
             if (refractory_met) {
                 step_count += 1;
                 last_step_tick = now;
+                log_step_detection_buffer(window, step_signal_window);
                 if (display.ready && glance_active) {
                     display_draw_step_count(&display, step_count);
                     last_rendered_step_count = step_count;
