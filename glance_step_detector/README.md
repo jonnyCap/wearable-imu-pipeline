@@ -50,7 +50,3 @@ idf.py build
 ```
 
 If your board uses a different ESP32 family, keep the same source and only adjust the LCD pins in `main/main.c` if needed.
-
-## Notes for Reflection
-
-For the assignment write-up, the glance detector is based on short windowed pose classification, not a single-axis tilt check. Wrist-right orientation is represented primarily by the X axis, while Y is used as front/back rejection. For faster activities such as running, the low-pass cutoff and step refractory interval usually need to be tuned separately to follow the higher cadence.
