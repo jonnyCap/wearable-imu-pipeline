@@ -20,7 +20,9 @@
 #include "lwip/sockets.h"
 #include "driver/gpio.h"
 #include "imu_driver.h"
-#include "secrets.h"  // Include WiFi credentials and other secrets
+#if __has_include("secrets.h")
+#include "secrets.h"  // Include local WiFi credentials and configuration
+#endif
 
 // Configuration Parameters - update these according to your local network and server setup
 #ifndef WIFI_SSID 
@@ -37,7 +39,7 @@
 #define BUTTON_GPIO    GPIO_NUM_39  // Button A on M5Stack
 #define BUTTON_DEBOUNCE_MS 50
 
-// Task specifications based on Task.md recommendations
+// Sampling and transmission parameters
 #define SAMPLE_RATE_HZ     20
 #define SAMPLE_INTERVAL_MS (1000 / SAMPLE_RATE_HZ)
 #define BATCH_SIZE         10  // Number of samples to send in a single TCP packet

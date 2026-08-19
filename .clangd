@@ -1,0 +1,15 @@
+CompileFlags:
+  CompilationDatabase: data_acquisition/build
+  Remove: [-f*, -m*]
+---
+If:
+  PathMatch: data_acquisition/.*
+CompileFlags:
+  CompilationDatabase: data_acquisition/build
+  Remove: [-f*, -m*]
+---
+If:
+  PathMatch: glance_step_detector/.*
+CompileFlags:
+  CompilationDatabase: glance_step_detector/build
+  Remove: [-f*, -m*]

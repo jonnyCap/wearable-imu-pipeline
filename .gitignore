@@ -1,0 +1,63 @@
+# ESP-IDF build artifacts
+build/
+**/build/
+*.bin
+*.elf
+*.map
+flasher_args.json
+sdkconfig.old
+managed_components/
+.espressif/
+dependencies.lock
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+
+# Secrets and local credentials (do not commit)
+**/secrets.h
+main/secrets.h
+
+# Python & Jupyter
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+*.egg-info/
+dist/
+.ipynb_checkpoints/
+
+# IDE & Editor files
+.vscode/
+.idea/
+.clangd/
+.ccls-cache/
+compile_commands.json
+*.user
+*.workspace
+*.suo
+*.sln.docstates
+.cache/
+
+# OS and Temporary files
+.DS_Store
+.AppleDouble
+.LSOverride
+.directory
+*~
+*.swp
+*.swo
+*.bak
+*.tmp
+*.log
+Thumbs.db
+ehthumbs.db
+Desktop.ini
